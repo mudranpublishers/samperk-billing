@@ -2,7 +2,7 @@
   "name": "samperk-billing",
   "version": "2.0.0",
   "private": true,
-  "description": "Samperk Pharmaceuticals Distributors — GST billing, inventory and accounts (offline Android app)",
+  "description": "Samperk Pharmaceuticals Distributors \u2014 GST billing, inventory and accounts (offline Android app)",
   "scripts": {
     "add:android": "cap add android",
     "sync": "cap sync android",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@capacitor/core": "^8.6.2",
-    "@capacitor/android": "^8.6.2"
+    "@capacitor/android": "^8.6.2",
+    "@capacitor-community/speech-recognition": "^7.0.1"
   }
 }

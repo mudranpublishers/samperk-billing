@@ -54,6 +54,27 @@ jobs:
           echo "--- MainActivity in place ---"
           ls -l android/app/src/main/java/in/samperk/billing/
 
+      - name: Microphone permission and speech-service query
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p).read()
+          if 'RECORD_AUDIO' not in s:
+              s = s.replace('</manifest>',
+                  '    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n</manifest>')
+          # Android 11+ needs an explicit query to see the speech recognition service
+          if 'android.speech.RecognitionService' not in s:
+              s = s.replace('</manifest>',
+                  '    <queries>\n'
+                  '        <intent>\n'
+                  '            <action android:name="android.speech.RecognitionService" />\n'
+                  '        </intent>\n'
+                  '    </queries>\n</manifest>')
+          open(p, 'w').write(s)
+          print(s)
+          PY
+
       - name: Copy the web app in
         run: npx cap sync android
 

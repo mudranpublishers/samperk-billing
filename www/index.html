@@ -254,7 +254,8 @@ function blank(){
       decl:"We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct."},
     settings:{prefix:"INV-",next:1,purPrefix:"PUR-",purNext:1,crPrefix:"CN-",crNext:1,drPrefix:"DN-",drNext:1,vchNext:1,
       roundoff:true,showHsn:true,showBatch:true,pricesIncl:false,rateType:"rate",negStock:true,
-      expiryWarnDays:90,labelCols:3,fyStart:"04-01"},
+      expiryWarnDays:90,labelCols:3,fyStart:"04-01",
+      voiceLang:"en-IN",voiceSpeak:true,voiceAutoAdd:true},
     ledgers:SYS.map(([id,name,group])=>({id,name,group,opening:0,openingType:"dr",system:true})),
     parties:[],items:[],invoices:[],purchases:[],crnotes:[],drnotes:[],vouchers:[],adjust:[]
   };
@@ -626,11 +627,13 @@ const ICON={
  out:'<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>',
  book:'<svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 013 3v13a2.5 2.5 0 00-2.5-2.5H4z"/><path d="M20 4h-3.5A2.5 2.5 0 0014 6.5V20a2.5 2.5 0 012.5-2.5H20z"/></svg>',
  tag:'<svg viewBox="0 0 24 24"><path d="M3 3h5l13 13-5 5L3 8z"/><circle cx="7" cy="7" r="1.4"/></svg>',
- gst:'<svg viewBox="0 0 24 24"><path d="M5 3h14v18H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>'
+ gst:'<svg viewBox="0 0 24 24"><path d="M5 3h14v18H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
+ mic:'<svg viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7"/></svg>'
 };
 const MENU=[
  ["grp","Daily"],
  ["dash","Dashboard","dash"],
+ ["voice","Voice billing","mic"],
  ["sale","Sales invoice","bill"],
  ["purchase","Purchase bill","in"],
  ["vouchers","Receipts &amp; payments","cash"],
@@ -2540,6 +2543,569 @@ const SEED=[
 ["Hand Sanitizer 500 ml","Ethyl alcohol 70% sanitizer","Generic","other","Allopathic","Bottle of 500 ml",165,0,"BTL","3808",18]
 ];
 /* =================================================================
+   voice billing — speak a bill into existence
+   Engines, in order of preference:
+     1. @capacitor-community/speech-recognition  (the APK; offline with
+        the device's language pack installed)
+     2. webkitSpeechRecognition                  (Chrome; needs network)
+     3. typed input                              (always available)
+   ================================================================= */
+const NUMW={
+ /* english */ "zero":0,"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,
+ "ten":10,"eleven":11,"twelve":12,"thirteen":13,"fourteen":14,"fifteen":15,"sixteen":16,"seventeen":17,
+ "eighteen":18,"nineteen":19,"twenty":20,"thirty":30,"forty":40,"fifty":50,"sixty":60,"seventy":70,
+ "eighty":80,"ninety":90,"hundred":100,"dozen":12,"half":0.5,
+ /* hindi / marathi, roman */ "ek":1,"eak":1,"do":2,"don":2,"teen":3,"tin":3,"char":4,"chaar":4,"paanch":5,"panch":5,"paach":5,
+ "cheh":6,"chhe":6,"che":6,"chah":6,"saat":7,"sat":7,"aath":8,"ath":8,"nau":9,"no":9,"das":10,"dus":10,"daha":10,
+ "gyarah":11,"barah":12,"bara":12,"terah":13,"chaudah":14,"pandrah":15,"pandra":15,"solah":16,"satrah":17,
+ "atharah":18,"unnis":19,"bees":20,"bis":20,"vees":20,"pachees":25,"pachchis":25,"tees":30,"chalees":40,
+ "pachas":50,"pachaas":50,"pannas":50,"saath":60,"sattar":70,"assi":80,"nabbe":90,"sau":100,"so":100,"hazar":1000,"adha":0.5,
+ /* devanagari */ "एक":1,"दो":2,"तीन":3,"चार":4,"पांच":5,"पाँच":5,"छह":6,"छे":6,"सात":7,"आठ":8,"नौ":9,"दस":10,
+ "ग्यारह":11,"बारह":12,"तेरह":13,"चौदह":14,"पंद्रह":15,"सोलह":16,"सत्रह":17,"अठारह":18,"उन्नीस":19,"बीस":20,
+ "पच्चीस":25,"तीस":30,"चालीस":40,"पचास":50,"साठ":60,"सत्तर":70,"अस्सी":80,"नब्बे":90,"सौ":100,"आधा":0.5
+};
+const UNITW={
+ "strip":"STRIP","strips":"STRIP","patta":"STRIP","pata":"STRIP","pattha":"STRIP","patte":"STRIP","पत्ता":"STRIP","पत्ते":"STRIP","स्ट्रिप":"STRIP",
+ "bottle":"BTL","bottles":"BTL","botal":"BTL","batol":"BTL","बोतल":"BTL","शीशी":"BTL","sisi":"BTL",
+ "tube":"TUBE","tubes":"TUBE","ट्यूब":"TUBE",
+ "box":"BOX","boxes":"BOX","dabba":"BOX","dibba":"BOX","डिब्बा":"BOX","बॉक्स":"BOX",
+ "packet":"PKT","packets":"PKT","pack":"PKT","पैकेट":"PKT","sachet":"PKT","sachets":"PKT",
+ "vial":"VIAL","vials":"VIAL","वायल":"VIAL","injection":"VIAL","injections":"VIAL","इंजेक्शन":"VIAL",
+ "ampoule":"AMP","amp":"AMP","piece":"PCS","pieces":"PCS","pcs":"PCS","nos":"PCS","number":"PCS",
+ "tin":"TIN","tins":"TIN","टिन":"TIN","jar":"JAR","जार":"JAR","roll":"ROLL","bag":"BAG",
+ "tablet":"STRIP","tablets":"STRIP","goli":"STRIP","गोली":"STRIP","capsule":"STRIP","capsules":"STRIP",
+ "dozen":"PCS","kg":"KG","gram":"GM","ml":"ML","litre":"LTR","liter":"LTR"
+};
+const CMDS=[
+ {k:"new",   w:["new bill","nayi bill","naya bill","new customer","nai bill","start bill","नई बिल","नया बिल","naya bil"]},
+ {k:"save",  w:["save bill","bill save","bill banao","save karo","bill final","final karo","complete bill","बिल बनाओ","सेव करो","बिल सेव"]},
+ {k:"print", w:["print bill","print karo","bill print","छापो","प्रिंट करो","print"]},
+ {k:"undo",  w:["undo","remove last","last hatao","hatao","wapas","cancel last","delete last","हटाओ","वापस","मिटाओ"]},
+ {k:"clear", w:["clear all","clear bill","sab hatao","saaf karo","reset bill","सब हटाओ"]},
+ {k:"total", w:["total","total kitna","kitna hua","how much","total bolo","कुल","टोटल","कितना हुआ"]},
+ {k:"cash",  w:["cash","cash bill","nagad","नगद","कैश"]},
+ {k:"credit",w:["credit","udhar","udhaar","उधार","क्रेडिट"]},
+ {k:"repeat",w:["repeat","phir bolo","दोहराओ","repeat karo"]}
+];
+const DEVDIG={"०":"0","१":"1","२":"2","३":"3","४":"4","५":"5","६":"6","७":"7","८":"8","९":"9"};
+
+const FILLER=new Set(["ka","ke","ki","ko","of","x","into","aur","and","plus","please","de","do_","dena","dijiye","चाहिए","का","के","की"]);
+function vNorm(s){
+  s=String(s||"").toLowerCase().trim();
+  s=s.replace(/[०-९]/g,c=>DEVDIG[c]||c);
+  /* product names carry hyphens, dots and slashes: Pan-D, Liv.52, 30/70 */
+  s=s.replace(/[-/.,!?;:"'`()+]/g," ").replace(/\s+/g," ").trim();
+  return s;
+}
+function vTokens(s){return vNorm(s).split(" ").filter(Boolean)}
+function numFrom(tokens){
+  /* returns {value, used:[indices]} for the first number-ish run */
+  let val=null,used=[];
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(/^\d+(\.\d+)?$/.test(t)){val=(val||0)+Number(t);used.push(i);
+      if(tokens[i+1]==="hundred"||tokens[i+1]==="sau"){val*=100;used.push(i+1)}
+      break}
+    if(NUMW[t]!=null){
+      let v=NUMW[t];used.push(i);
+      const nx=tokens[i+1];
+      if(nx&&(nx==="hundred"||nx==="sau"||nx==="सौ")){v*=100;used.push(i+1)}
+      else if(nx&&NUMW[nx]!=null&&v>=20&&NUMW[nx]<10){v+=NUMW[nx];used.push(i+1)}
+      val=v;break}
+  }
+  return val==null?null:{value:val,used};
+}
+function lev(a,b){
+  if(a===b)return 0;const m=a.length,n=b.length;
+  if(!m||!n)return Math.max(m,n);
+  let prev=Array.from({length:n+1},(_,i)=>i);
+  for(let i=1;i<=m;i++){const cur=[i];
+    for(let j=1;j<=n;j++)cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));
+    prev=cur}
+  return prev[n];
+}
+function tokSim(q,t){
+  if(q===t)return 1;
+  if(t.startsWith(q)||q.startsWith(t))return 0.85;
+  const L=Math.max(q.length,t.length);
+  if(L>=4){const d=lev(q,t);if(d<=1)return 0.75;if(d===2&&L>=6)return 0.55}
+  return 0;
+}
+/* ---------- fuzzy product match ---------- */
+let _idx=null,_idxN=0;
+function itemIndex(){
+  if(_idx&&_idxN===db.items.length)return _idx;
+  _idx=db.items.map(i=>({
+    it:i,
+    name:vTokens(i.name),
+    extra:vTokens([i.composition,i.company,i.pack].filter(Boolean).join(" "))
+  }));
+  _idxN=db.items.length;return _idx;
+}
+function matchItems(query){
+  const all=vTokens(query);
+  const q=all.filter(t=>!UNITW[t]&&NUMW[t]==null&&!FILLER.has(t)&&(t.length>1||all.length>1));
+  if(!q.length)return [];
+  const out=[];
+  itemIndex().forEach(e=>{
+    let score=0,hit=0,numHit=0,numMiss=0;
+    q.forEach(qt=>{
+      let best=0;
+      e.name.forEach(nt=>{const s=tokSim(qt,nt);if(s>best)best=s});
+      let bestX=0;
+      e.extra.forEach(nt=>{const s=tokSim(qt,nt);if(s>bestX)bestX=s});
+      const isNum=/^\d+$/.test(qt);
+      if(qt.length===1&&!isNum){score+=best*0.8;if(best>0)hit++;return}
+      if(isNum){
+        if(best>=0.99){numHit++;hit++;score+=2.2}
+        else if(e.name.some(nt=>/^\d+$/.test(nt))){numMiss++;score-=0.8}
+      } else {
+        if(best>0){score+=best*1.6;hit++}
+        else if(bestX>0){score+=bestX*0.5;hit++}
+      }
+    });
+    /* prefer shorter names that are fully covered */
+    const cover=hit/q.length;
+    score+=cover*1.2;
+    score-=Math.max(0,e.name.length-q.length)*0.06;
+    /* the query IS the product name, word for word — that beats any fuzz */
+    const qs=q.slice().sort().join(" "), ns=e.name.slice().sort().join(" ");
+    if(qs===ns)score+=2.2;
+    if(score>1.4)out.push({item:e.it,score:n2(score),cover:n2(cover),numHit,numMiss,
+      stock:stockOf(e.it.id)});
+  });
+  out.sort((a,b)=>b.score-a.score||b.stock-a.stock);
+  return out.slice(0,6);
+}
+/* ---------- utterance parser ---------- */
+function parseUtterance(raw){
+  const text=vNorm(raw);
+  if(!text)return{kind:"empty"};
+  for(const c of CMDS)
+    for(const w of c.w)
+      if(text===w||text.startsWith(w+" ")||text.endsWith(" "+w)||text===vNorm(w))return{kind:"cmd",cmd:c.k,text};
+  /* customer <name> */
+  const cm=text.match(/^(?:customer|party|grahak|ग्राहक|कस्टमर|naam|name)\s+(.+)$/);
+  if(cm)return{kind:"customer",name:cm[1],text};
+  /* discount N percent */
+  const dm=text.match(/(?:discount|chhut|छूट)\s*(\d+(?:\.\d+)?)/);
+  if(dm)return{kind:"discount",value:Number(dm[1]),text};
+  /* item line: separate quantity from the numbers that live inside product
+     names (Dolo 650, Pan 40). A number sitting next to a unit word — allowing
+     one filler word between — is the quantity; anything else stays in the name. */
+  const toks=vTokens(text);
+  const isNumTok=i=>i>=0&&i<toks.length&&(/^\d+(\.\d+)?$/.test(toks[i])||NUMW[toks[i]]!=null);
+  const isUnitTok=i=>i>=0&&i<toks.length&&!!UNITW[toks[i]];
+  let qtyIdx=-1,unit=null,unitIdx=-1;
+  for(let i=0;i<toks.length;i++){
+    if(!isNumTok(i))continue;
+    for(const step of [1,2]){
+      if(isUnitTok(i+step)&&(step===1||FILLER.has(toks[i+1]))){qtyIdx=i;unitIdx=i+step;break}
+      if(isUnitTok(i-step)&&(step===1||FILLER.has(toks[i-1]))){qtyIdx=i;unitIdx=i-step;break}
+    }
+    if(qtyIdx>=0)break;
+  }
+  if(unitIdx>=0)unit=UNITW[toks[unitIdx]];
+  if(!unit)toks.forEach(t=>{if(!unit&&UNITW[t])unit=UNITW[t]});
+  let qty=null;
+  if(qtyIdx>=0){const t=toks[qtyIdx];qty=/^\d/.test(t)?Number(t):NUMW[t];
+    if(NUMW[toks[qtyIdx+1]]!=null&&(toks[qtyIdx+1]==="sau"||toks[qtyIdx+1]==="hundred"))qty*=100}
+  /* words that are definitely not part of the name */
+  const nameQuery=toks.filter((t,i)=>i!==qtyIdx&&i!==unitIdx&&!FILLER.has(t)).join(" ");
+  const best=matchItems(nameQuery||text);
+  if(!best.length||best[0].score<2.2)return{kind:"nomatch",text,candidates:best.filter(c=>c.score>1.8)};
+  if(qty==null){const n=numFrom(toks.filter((t,i)=>{
+      /* a leftover number not used by the matched name */
+      const nameToks=new Set(vTokens(best[0].item.name));return !nameToks.has(t)}));
+    if(n)qty=n.value}
+  const top=best[0], second=best[1];
+  const strong=top.cover>=0.99&&top.score>=2.5&&(!second||top.score-second.score>=0.7);
+  return{kind:"item",candidates:best,qty,unit,strong,text};
+}
+/* ---------- speech engines ---------- */
+const Voice={
+  engine:null,lang:"en-IN",listening:false,onText:null,onPartial:null,onState:null,_rec:null,
+  async detect(){
+    try{
+      const P=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.SpeechRecognition;
+      if(P){const a=await P.available();if(a&&(a.available!==false)){this.engine="native";return "native"}}
+    }catch(e){}
+    if(window.webkitSpeechRecognition||window.SpeechRecognition){this.engine="web";return "web"}
+    this.engine=null;return null;
+  },
+  async permission(){
+    try{
+      const P=window.Capacitor.Plugins.SpeechRecognition;
+      if(P.checkPermissions){const c=await P.checkPermissions();
+        if(c&&c.speechRecognition==="granted")return true}
+      const r=await P.requestPermissions();
+      return !r||r.speechRecognition!=="denied";
+    }catch(e){return true}
+  },
+  async start(){
+    if(this.listening)return;
+    const st=t=>{this.listening=t;if(this.onState)this.onState(t)};
+    if(this.engine==="native"){
+      const P=window.Capacitor.Plugins.SpeechRecognition;
+      if(!(await this.permission()))return toast("Microphone permission was declined");
+      try{
+        await P.removeAllListeners();
+        P.addListener("partialResults",d=>{const m=(d&&d.matches)||[];if(m[0]&&this.onPartial)this.onPartial(m[0])});
+        P.addListener("listeningState",d=>{if(d&&d.status==="stopped")st(false)});
+      }catch(e){}
+      st(true);
+      try{
+        const r=await P.start({language:this.lang,maxResults:3,partialResults:true,popup:false});
+        st(false);
+        const m=(r&&r.matches)||[];
+        if(m.length&&this.onText)this.onText(m[0],m);
+      }catch(e){st(false);toast("Could not hear that — try again")}
+      return;
+    }
+    if(this.engine==="web"){
+      const R=window.SpeechRecognition||window.webkitSpeechRecognition;
+      const rec=new R();this._rec=rec;
+      rec.lang=this.lang;rec.interimResults=true;rec.maxAlternatives=3;rec.continuous=false;
+      rec.onresult=e=>{
+        let fin="",part="";const alts=[];
+        for(let i=e.resultIndex;i<e.results.length;i++){
+          const r=e.results[i];
+          if(r.isFinal){fin+=r[0].transcript;for(let j=0;j<r.length;j++)alts.push(r[j].transcript)}
+          else part+=r[0].transcript;
+        }
+        if(part&&this.onPartial)this.onPartial(part);
+        if(fin&&this.onText)this.onText(fin.trim(),alts);
+      };
+      rec.onerror=ev=>{st(false);
+        if(ev.error==="not-allowed")toast("Microphone blocked — allow it in the browser");
+        else if(ev.error==="no-speech")toast("Didn't catch that");
+        else if(ev.error==="network")toast("Speech needs internet in the browser — the APK works offline");
+      };
+      rec.onend=()=>st(false);
+      st(true);try{rec.start()}catch(e){st(false)}
+      return;
+    }
+    toast("No speech engine here — type the line instead");
+  },
+  stop(){
+    try{
+      if(this.engine==="native")window.Capacitor.Plugins.SpeechRecognition.stop();
+      else if(this._rec)this._rec.stop();
+    }catch(e){}
+    this.listening=false;if(this.onState)this.onState(false);
+  },
+  say(text){
+    if(!db.settings.voiceSpeak)return;
+    try{
+      if(!window.speechSynthesis)return;
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang=this.lang;u.rate=1.02;
+      speechSynthesis.cancel();speechSynthesis.speak(u);
+    }catch(e){}
+  }
+};
+
+/* =================================================================
+   voice billing screen
+   ================================================================= */
+let vst=null;
+function vReset(){
+  vst={party:"",partyName:"",mode:"Credit",lines:[],transcript:"",partial:"",
+       pending:null,log:[],lastSaved:null};
+}
+function vLineTotal(l){return calcLine(l,isInter(vst.party)).total}
+function vTotals(){
+  const d={party:vst.party,lines:vst.lines,charges:[],billDisc:""};
+  return calcDoc(d);
+}
+VIEWS.voice=function(p){
+  if(!vst)vReset();
+  const eng=Voice.engine;
+  p.innerHTML=
+  '<div class="hd"><div class="grow"><h2>Voice billing</h2>'+
+    '<div class="sub">Speak the medicine and quantity · '+
+      (eng==="native"?"device speech, works offline":eng==="web"?"browser speech, needs internet":"no microphone here — type below")+
+    '</div></div>'+
+    '<select id="v-lang" style="width:auto;flex:0 0 auto">'+
+      [["en-IN","English (India)"],["hi-IN","हिन्दी"],["mr-IN","मराठी"],["gu-IN","ગુજરાતી"],["bn-IN","বাংলা"],["ta-IN","தமிழ்"],["te-IN","తెలుగు"]]
+        .map(([v,l])=>'<option value="'+v+'"'+((db.settings.voiceLang||"en-IN")===v?" selected":"")+'>'+l+'</option>').join("")+
+    '</select>'+
+    '<button class="btn" id="v-help">Phrases</button></div>'+
+
+  '<div class="row" style="align-items:stretch">'+
+    /* left: mic + transcript */
+    '<div class="card" style="flex:0 0 330px;min-width:290px"><div class="bd" style="text-align:center">'+
+      '<button id="v-mic" style="width:150px;height:150px;border-radius:50%;border:0;cursor:pointer;'+
+        'background:'+(Voice.listening?"#b3261e":"#1f5f8b")+';color:#fff;box-shadow:0 6px 20px rgba(31,95,139,.35)">'+
+        '<svg viewBox="0 0 24 24" width="54" height="54" fill="none" stroke="#fff" stroke-width="1.8" style="margin-bottom:2px">'+
+        '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7"/></svg>'+
+        '<div style="font-size:15px;font-weight:700;letter-spacing:.02em">'+(Voice.listening?"LISTENING…":"TAP &amp; SPEAK")+'</div>'+
+      '</button>'+
+      '<div style="margin-top:14px;min-height:54px;font-size:17px;font-weight:600;line-height:1.3" id="v-tr">'+
+        (vst.partial?'<span class="dim">'+esc(vst.partial)+'…</span>':esc(vst.transcript)||'<span class="dim" style="font-size:14px;font-weight:400">“Dolo 650 das patta”</span>')+'</div>'+
+      '<div class="sep"></div>'+
+      '<label class="f">Or type the line</label>'+
+      '<div class="row" style="gap:6px"><input id="v-text" placeholder="pan 40 do patta" style="flex:1;font-size:15px">'+
+        '<button class="btn pri" id="v-add">Add</button></div>'+
+      '<div class="row" style="gap:8px;margin-top:10px;justify-content:center">'+
+        '<label style="display:flex;gap:5px;align-items:center;font-size:12.5px"><input type="checkbox" id="v-speak" style="width:auto"'+(db.settings.voiceSpeak?" checked":"")+'> Speak back</label>'+
+        '<label style="display:flex;gap:5px;align-items:center;font-size:12.5px"><input type="checkbox" id="v-auto" style="width:auto"'+(db.settings.voiceAutoAdd!==false?" checked":"")+'> Auto-add clear matches</label>'+
+      '</div>'+
+    '</div></div>'+
+
+    /* right: the bill as it builds */
+    '<div class="card grow" style="min-width:340px"><div class="bd">'+
+      '<div class="row" style="align-items:flex-end;margin-bottom:4px">'+
+        '<div class="fld sugg" style="flex:2 1 200px;margin-bottom:0"><label class="f">Customer</label>'+
+          '<input id="v-party" value="'+esc(vst.partyName)+'" placeholder="say “customer Sai Medical”" style="font-size:15px"></div>'+
+        '<div class="fld" style="flex:0 0 120px;margin-bottom:0"><label class="f">Bill type</label>'+
+          '<select id="v-mode">'+["Credit","Cash"].map(m=>'<option'+(vst.mode===m?" selected":"")+'>'+m+'</option>').join("")+'</select></div>'+
+      '</div>'+
+      '<div id="v-pinfo" class="hint" style="margin:6px 0 10px"></div>'+
+      '<div id="v-pending"></div>'+
+      '<div id="v-lines"></div>'+
+      '<div id="v-foot"></div>'+
+    '</div></div>'+
+  '</div>';
+
+  /* wiring */
+  const mic=$("#v-mic");
+  Voice.onState=()=>{render()};
+  Voice.onPartial=t=>{vst.partial=t;const n=$("#v-tr");if(n)n.innerHTML='<span class="dim">'+esc(t)+'…</span>'};
+  Voice.onText=(t,alts)=>{vst.partial="";vst.transcript=t;handle(t,alts)};
+  mic.onclick=()=>{if(Voice.listening)Voice.stop();else Voice.start()};
+  $("#v-lang").onchange=e=>{db.settings.voiceLang=e.target.value;Voice.lang=e.target.value;mark()};
+  $("#v-speak").onchange=e=>{db.settings.voiceSpeak=e.target.checked;mark()};
+  $("#v-auto").onchange=e=>{db.settings.voiceAutoAdd=e.target.checked;mark()};
+  $("#v-mode").onchange=e=>{vst.mode=e.target.value};
+  $("#v-help").onclick=vHelp;
+  const ti=$("#v-text");
+  ti.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();const v=ti.value.trim();if(v){vst.transcript=v;handle(v)}}};
+  $("#v-add").onclick=()=>{const v=ti.value.trim();if(v){vst.transcript=v;handle(v)}};
+  const pi=$("#v-party");
+  attachSuggest(pi,q=>db.parties.filter(x=>x.type!=="supplier").filter(x=>!q||x.name.toLowerCase().includes(q))
+    .map(x=>({label:x.name,right:esc(money(Math.abs(partyBalance(x.id)))),v:x})),
+    o=>{vst.party=o.v.id;vst.partyName=o.v.name;render()});
+  pi.oninput=()=>{vst.partyName=pi.value;const m=db.parties.find(x=>x.name.toLowerCase()===pi.value.toLowerCase());vst.party=m?m.id:"";pinfo()};
+  pinfo();drawPending();drawLines();
+
+  function pinfo(){
+    const pt=party(vst.party),n=$("#v-pinfo");if(!n)return;
+    if(!pt){n.innerHTML=vst.partyName?'<span class="hint">New name — will be created as a customer.</span>':'<span class="hint">Leave blank for a counter sale.</span>';return}
+    n.innerHTML=esc([pt.city,stName(pt.state)].filter(Boolean).join(", "))+
+      (isInter(pt.id)?' <span class="pill">IGST</span>':' <span class="pill">CGST + SGST</span>')+
+      ' · balance <b>'+money(partyBalance(pt.id))+'</b>'+(num(pt.credit)?" · "+pt.credit+" days":"");
+  }
+  function drawPending(){
+    const n=$("#v-pending");if(!n)return;n.innerHTML="";
+    if(!vst.pending)return;
+    const P=vst.pending;
+    n.innerHTML='<div class="warnbar" style="margin-bottom:10px"><b>Which one?</b> heard “'+esc(P.text)+'”'+
+      (P.qty?" · qty "+qty(P.qty):"")+'</div>'+
+      '<div class="row" style="gap:8px;margin-bottom:12px">'+
+        P.candidates.map((c,i)=>'<button class="btn" data-pick="'+i+'" style="flex:1 1 200px;text-align:left;padding:10px 12px">'+
+          '<div style="font-weight:700;font-size:14px">'+(i+1)+'. '+esc(c.item.name)+'</div>'+
+          '<div class="hint">'+esc(c.item.pack||"")+' · MRP '+money(c.item.mrp)+' · stock '+qty(c.stock)+'</div></button>').join("")+
+        '<button class="btn ghost" data-pick="x" style="flex:0 0 90px">Cancel</button>'+
+      '</div>';
+    n.querySelectorAll("[data-pick]").forEach(b=>b.onclick=()=>{
+      const v=b.dataset.pick;
+      if(v==="x"){vst.pending=null;render();return}
+      addItem(P.candidates[Number(v)].item,P.qty,P.unit);
+    });
+  }
+  function drawLines(){
+    const n=$("#v-lines");if(!n)return;
+    if(!vst.lines.length){n.innerHTML='<div class="empty">Nothing on the bill yet. Tap the mic and say the medicine with the quantity.</div>';
+      $("#v-foot").innerHTML="";return}
+    const T=vTotals();
+    n.innerHTML='<div class="scrollx"><table style="font-size:14.5px"><thead><tr>'+
+      '<th>Item</th><th>Batch</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th><th></th></tr></thead><tbody>'+
+      vst.lines.map((l,i)=>{
+        const it=item(l.item)||{};
+        const have=(batchStock(l.item).find(b=>(b.batch||"")===(l.batch||""))||{qty:0}).qty;
+        return '<tr><td><b>'+esc(l.name)+'</b>'+(it.rx?' <span class="tag due">Rx</span>':'')+
+            '<div class="hint">'+esc(it.pack||"")+'</div></td>'+
+          '<td>'+esc(l.batch||"—")+(l.exp?'<div class="hint">'+my(l.exp)+'</div>':'')+'</td>'+
+          '<td class="num"><button class="btn sm" data-dec="'+i+'">−</button> <b style="font-size:16px">'+qty(l.qty)+'</b> '+
+            '<button class="btn sm" data-inc="'+i+'">+</button>'+
+            (num(l.qty)>have?'<div style="color:var(--bad);font-size:11px">only '+qty(have)+' in stock</div>':'')+'</td>'+
+          '<td class="num mono">'+money(l.rate)+'</td>'+
+          '<td class="num mono"><b>'+money(vLineTotal(l))+'</b></td>'+
+          '<td><button class="btn ghost sm" data-del="'+i+'">✕</button></td></tr>'}).join("")+
+      '</tbody></table></div>';
+    $("#v-foot").innerHTML='<div class="sep"></div><div class="row" style="align-items:center">'+
+      '<div class="grow"><div class="gsum" style="max-width:260px">'+
+        '<span>Taxable</span><b>'+money(T.taxable)+'</b>'+
+        (T.inter?'<span>IGST</span><b>'+money(T.igst)+'</b>':'<span>CGST + SGST</span><b>'+money(T.cgst+T.sgst)+'</b>')+
+        (T.round?'<span>Round off</span><b>'+money(T.round)+'</b>':'')+
+      '</div></div>'+
+      '<div style="text-align:right"><div class="hint">'+vst.lines.length+' items · '+qty(T.qty)+' qty</div>'+
+        '<div style="font-size:32px;font-weight:700;letter-spacing:-.02em">'+rup(T.grand)+'</div></div>'+
+    '</div>'+
+    '<div class="row" style="gap:8px;margin-top:12px">'+
+      '<button class="btn" id="v-undo">Undo last</button>'+
+      '<button class="btn" id="v-clear">Clear bill</button>'+
+      '<div class="grow"></div>'+
+      '<button class="btn" id="v-review" style="padding:11px 18px;font-size:15px">Review &amp; save</button>'+
+      '<button class="btn pri" id="v-saveprint" style="padding:11px 18px;font-size:15px">Save &amp; print</button>'+
+    '</div>';
+    n.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{vst.lines[b.dataset.inc].qty=num(vst.lines[b.dataset.inc].qty)+1;drawLines()});
+    n.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const l=vst.lines[b.dataset.dec];
+      l.qty=Math.max(1,num(l.qty)-1);drawLines()});
+    n.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{vst.lines.splice(Number(b.dataset.del),1);drawLines()});
+    $("#v-undo").onclick=()=>{vst.lines.pop();Voice.say("Last item removed");drawLines()};
+    $("#v-clear").onclick=()=>confirmBox("Clear this bill and start again?",()=>{vReset();render()});
+    $("#v-review").onclick=()=>review(false);
+    $("#v-saveprint").onclick=()=>review(true);
+  }
+  function addItem(it,q,unit){
+    const bs=batchStock(it.id).filter(b=>b.qty>0);
+    const b=bs[0]||{batch:"",exp:"",mrp:it.mrp};
+    const pt=party(vst.party);
+    const f=(pt&&pt.rateType)||db.settings.rateType||"rate";
+    const l={item:it.id,name:it.name,hsn:it.hsn||"",batch:b.batch||"",exp:b.exp||"",mrp:num(b.mrp)||num(it.mrp),
+      unit:unit||it.unit||"PCS",qty:q||1,free:0,rate:num(it[f])||num(it.rate),disc:0,gst:num(it.gst),cess:num(it.cess)};
+    const ex=vst.lines.find(x=>x.item===l.item&&x.batch===l.batch);
+    if(ex)ex.qty=num(ex.qty)+num(l.qty);else vst.lines.push(l);
+    vst.pending=null;
+    const amt=vLineTotal(ex||l);
+    let msg=it.name+", "+qty(l.qty)+" "+l.unit.toLowerCase()+", "+money(amt)+" rupees";
+    if(!bs.length)msg+=". No stock recorded";
+    Voice.say(msg);
+    if(it.rx)toast(it.name+" is a prescription item");
+    render();
+  }
+  function handle(text,alts){
+    const r=parseUtterance(text);
+    vst.log.push({text,kind:r.kind});
+    if(r.kind==="cmd"){
+      if(r.cmd==="new"){vReset();Voice.say("New bill started");render();return}
+      if(r.cmd==="undo"){vst.lines.pop();Voice.say("Removed");render();return}
+      if(r.cmd==="clear"){vReset();Voice.say("Bill cleared");render();return}
+      if(r.cmd==="total"){const T=vTotals();Voice.say("Total "+Math.round(T.grand)+" rupees");toast("Total "+rup(T.grand));return}
+      if(r.cmd==="cash"){vst.mode="Cash";Voice.say("Cash bill");render();return}
+      if(r.cmd==="credit"){vst.mode="Credit";Voice.say("Credit bill");render();return}
+      if(r.cmd==="save"){review(false);return}
+      if(r.cmd==="print"){review(true);return}
+      if(r.cmd==="repeat"){const l=vst.lines[vst.lines.length-1];
+        if(l)Voice.say(l.name+", "+qty(l.qty)+", "+money(vLineTotal(l)));return}
+    }
+    if(r.kind==="customer"){
+      const m=matchParty(r.name);
+      if(m){vst.party=m.id;vst.partyName=m.name;Voice.say("Customer "+m.name);render()}
+      else{vst.partyName=r.name.replace(/\b\w/g,c=>c.toUpperCase());vst.party="";Voice.say("New customer "+vst.partyName);render()}
+      return;
+    }
+    if(r.kind==="discount"){
+      const l=vst.lines[vst.lines.length-1];
+      if(l){l.disc=r.value;Voice.say(r.value+" percent discount on "+l.name);render()}
+      return;
+    }
+    if(r.kind==="item"){
+      if(r.strong&&db.settings.voiceAutoAdd!==false)addItem(r.candidates[0].item,r.qty,r.unit);
+      else{vst.pending={candidates:r.candidates,qty:r.qty,unit:r.unit,text};
+        Voice.say("Which one?");render()}
+      return;
+    }
+    /* nothing matched — try the alternative transcripts the engine offered */
+    if(alts&&alts.length>1){
+      for(const a of alts.slice(1)){
+        const r2=parseUtterance(a);
+        if(r2.kind==="item"&&r2.strong){addItem(r2.candidates[0].item,r2.qty,r2.unit);return}
+      }
+    }
+    if(r.candidates&&r.candidates.length){
+      vst.pending={candidates:r.candidates,qty:r.qty,unit:r.unit,text};Voice.say("Did you mean");render();return;
+    }
+    Voice.say("Not found");toast('No medicine matched “'+text+'”');render();
+  }
+  function matchParty(name){
+    const q=vNorm(name);
+    let best=null,bs=0;
+    db.parties.filter(x=>x.type!=="supplier").forEach(x=>{
+      const t=vNorm(x.name);let s=0;
+      if(t===q)s=3;else if(t.startsWith(q)||q.startsWith(t))s=2.2;
+      else{const qt=q.split(" "),tt=t.split(" ");
+        qt.forEach(a=>tt.forEach(b=>{const v=tokSim(a,b);if(v>0.7)s+=v}))}
+      if(s>bs){bs=s;best=x}});
+    return bs>=1.4?best:null;
+  }
+  function review(print){
+    if(!vst.lines.length)return toast("Nothing on the bill yet");
+    const T=vTotals();
+    const rx=vst.lines.filter(l=>(item(l.item)||{}).rx);
+    const short=vst.lines.filter(l=>{
+      const have=(batchStock(l.item).find(b=>(b.batch||"")===(l.batch||""))||{qty:0}).qty;
+      return num(l.qty)>have});
+    modal("Check the bill before saving",
+      '<div style="font-size:15px">'+
+      '<div class="row" style="gap:18px;margin-bottom:10px"><div><div class="l f">Customer</div><b>'+esc(vst.partyName||"Counter sale")+'</b></div>'+
+      '<div><div class="l f">Type</div><b>'+esc(vst.mode)+'</b></div>'+
+      '<div><div class="l f">Items</div><b>'+vst.lines.length+'</b></div></div>'+
+      tbl(["Item","Batch","Qty","Rate","Amount"],vst.lines.map(l=>[esc(l.name),esc(l.batch||"—"),
+        {n:qty(l.qty)+" "+esc(l.unit)},{n:money(l.rate)},{n:money(vLineTotal(l))}]))+
+      '<div class="sep"></div>'+
+      '<div style="display:flex;justify-content:space-between;align-items:baseline">'+
+        '<span>Total payable</span><span style="font-size:30px;font-weight:700">'+rup(T.grand)+'</span></div>'+
+      '<div class="hint">'+esc(words(T.grand))+'</div>'+
+      (rx.length?'<div class="warnbar" style="margin-top:10px">'+rx.length+' prescription item'+(rx.length>1?"s":"")+' — keep the doctor\'s prescription on file.</div>':'')+
+      (short.length?'<div class="warnbar" style="margin-top:8px">Short of stock: '+esc(short.map(l=>l.name).join(", "))+'. The bill will still save and stock will go negative.</div>':'')+
+      '</div>',
+      [["Back","close"],[print?"Save & print":"Save bill",()=>commit(print),"pri"]],true);
+    Voice.say("Total "+Math.round(T.grand)+" rupees. Save?");
+  }
+  function commit(print){
+    const T=vTotals();
+    if(!vst.party&&vst.partyName.trim()){
+      const pt={id:uid("p"),name:vst.partyName.trim(),type:"customer",gstin:"",state:db.company.state,
+        addr:"",city:"",pin:"",phone:"",email:"",credit:0,limit:0,opening:0,openingType:"dr",rateType:"rate"};
+      db.parties.push(pt);vst.party=pt.id;
+    }
+    if(!vst.party){
+      let counter=db.parties.find(x=>x.name==="Counter Sale");
+      if(!counter){counter={id:uid("p"),name:"Counter Sale",type:"customer",gstin:"",state:db.company.state,
+        addr:"",city:"",pin:"",phone:"",email:"",credit:0,limit:0,opening:0,openingType:"dr",rateType:"rate"};
+        db.parties.push(counter)}
+      vst.party=counter.id;vst.partyName=counter.name;
+    }
+    const rec={id:uid("d"),type:"sale",no:docNo("sale"),date:today(),party:vst.party,partyName:vst.partyName,
+      mode:vst.mode,refNo:"",refDate:"",against:"",vehicle:"",eway:"",lr:"",
+      due:vst.mode==="Cash"?"":addDays(today(),num((party(vst.party)||{}).credit)),
+      lines:vst.lines.map(l=>({...l,qty:num(l.qty)})),charges:[],billDisc:"",notes:"Entered by voice"};
+    calcDoc(rec);
+    db.invoices.push(rec);
+    const m=/(\d+)\s*$/.exec(rec.no);db.settings.next=m?Number(m[1])+1:db.settings.next+1;
+    touch();
+    Voice.say("Bill "+rec.no+" saved. "+Math.round(rec.totals.grand)+" rupees");
+    toast("Bill "+rec.no+" saved · "+rup(rec.totals.grand));
+    const id=rec.id;
+    vReset();render();
+    if(print)printDoc(id);
+  }
+};
+function vHelp(){
+  modal("What you can say",
+   '<div style="font-size:14px">'+
+   tbl(["Say this","What happens"],[
+     ['<b>“Dolo 650 das patta”</b> / <b>“ten strip Dolo 650”</b>',"Adds 10 strips of Dolo 650 at your sale rate"],
+     ['<b>“do bottle Ascoril LS syrup”</b>',"Adds 2 bottles — Hindi or English numbers both work"],
+     ['<b>“customer Sai Medical Stores”</b>',"Sets the customer; new names are created"],
+     ['<b>“cash”</b> / <b>“udhaar”</b>',"Switches between a cash bill and a credit bill"],
+     ['<b>“discount 5”</b>',"Puts 5% discount on the line just added"],
+     ['<b>“total”</b> / <b>“kitna hua”</b>',"Speaks the running total"],
+     ['<b>“hatao”</b> / <b>“undo”</b>',"Removes the last item"],
+     ['<b>“bill banao”</b> / <b>“save bill”</b>',"Opens the review screen before saving"],
+     ['<b>“print karo”</b>',"Review, then save and print"],
+     ['<b>“nayi bill”</b>',"Starts a fresh bill"]])+
+   '<div class="sep"></div>'+
+   '<p><b>Numbers it understands:</b> 1–100 as digits, English (one, two, ten, twenty) and Hindi/Marathi (ek, do, teen, char, paanch, das, bees, pachas, sau), in Roman or Devanagari.</p>'+
+   '<p><b>Units:</b> patta / strip, bottle / botal, tube, dabba / box, packet / sachet, vial / injection, piece, tin, jar.</p>'+
+   '<p class="hint">Nothing saves until you tap <b>Save</b> on the review screen — a misheard word can never become a bill on its own. '+
+   'The earliest-expiry batch in stock is picked automatically.</p>'+
+   '</div>',[["Close","close"]],true);
+}
+/* =================================================================
    catalogue loader, sample data, boot
    ================================================================= */
 function loadCatalogue(){
@@ -2624,7 +3190,10 @@ function sampleTransactions(){
   touch();
 }
 /* ---------- boot ---------- */
-function boot(){_stamp++;recalcAll();setPage(db.settings.printFormat||"A4");drawNav();render()}
+function boot(){_stamp++;recalcAll();setPage(db.settings.printFormat||"A4");drawNav();render();
+  Voice.lang=db.settings.voiceLang||"en-IN";
+  Voice.detect().then(e=>{if(view==="voice")render()});
+}
 window.addEventListener("beforeunload",e=>{if(dirty){e.preventDefault();e.returnValue=""}});
 $("#btnsave").onclick=()=>saveFile(false);
 $("#btnopen").onclick=openFile;
