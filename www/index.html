@@ -255,9 +255,10 @@ function blank(){
     settings:{prefix:"INV-",next:1,purPrefix:"PUR-",purNext:1,crPrefix:"CN-",crNext:1,drPrefix:"DN-",drNext:1,vchNext:1,
       roundoff:true,showHsn:true,showBatch:true,pricesIncl:false,rateType:"rate",negStock:true,
       expiryWarnDays:90,labelCols:3,fyStart:"04-01",
-      voiceLang:"en-IN",voiceSpeak:true,voiceAutoAdd:true},
+      voiceLang:"en-IN",voiceSpeak:true,voiceAutoAdd:true,
+      ordPrefix:"ORD-",ordNext:1,fieldPrefix:"SF-",fieldNext:1,fieldMode:false,fieldKind:"order"},
     ledgers:SYS.map(([id,name,group])=>({id,name,group,opening:0,openingType:"dr",system:true})),
-    parties:[],items:[],invoices:[],purchases:[],crnotes:[],drnotes:[],vouchers:[],adjust:[]
+    parties:[],items:[],invoices:[],purchases:[],crnotes:[],drnotes:[],vouchers:[],adjust:[],orders:[]
   };
   return d;
 }
@@ -341,7 +342,8 @@ function hydrate(d){
       settings:Object.assign(b.settings,m.settings||{}),
       ledgers:(m.ledgers&&m.ledgers.length?m.ledgers:b.ledgers),
       parties:m.parties||[],items:m.items||[],invoices:m.invoices||[],purchases:m.purchases||[],
-      crnotes:m.crnotes||[],drnotes:m.drnotes||[],vouchers:m.vouchers||[],adjust:m.adjust||[]};
+      crnotes:m.crnotes||[],drnotes:m.drnotes||[],vouchers:m.vouchers||[],adjust:m.adjust||[],
+      orders:m.orders||[]};
   SYS.forEach(([id,name,group])=>{if(!db.ledgers.some(l=>l.id===id))db.ledgers.push({id,name,group,opening:0,openingType:"dr",system:true})});
   return true;
 }
@@ -634,6 +636,7 @@ const MENU=[
  ["grp","Daily"],
  ["dash","Dashboard","dash"],
  ["voice","Voice billing","mic"],
+ ["orders","Field orders","out"],
  ["sale","Sales invoice","bill"],
  ["purchase","Purchase bill","in"],
  ["vouchers","Receipts &amp; payments","cash"],
@@ -2855,6 +2858,16 @@ VIEWS.voice=function(p){
         .map(([v,l])=>'<option value="'+v+'"'+((db.settings.voiceLang||"en-IN")===v?" selected":"")+'>'+l+'</option>').join("")+
     '</select>'+
     '<button class="btn" id="v-help">Phrases</button></div>'+
+  '<div class="row" style="gap:8px;margin-bottom:12px;align-items:center">'+
+    '<span class="f" style="margin:0">This slip is</span>'+
+    '<div class="tabs" style="margin:0">'+
+      [["order","Order / estimate"],["invoice","Tax invoice"]].map(([k,l])=>
+        '<button class="'+((db.settings.fieldKind||"order")===k?"on":"")+'" data-kind="'+k+'">'+l+'</button>').join("")+
+    '</div>'+
+    '<span class="hint">'+((db.settings.fieldKind||"order")==="order"
+      ?"Goods delivered later — Marg raises the tax invoice. Next: <b>"+esc(ordNo())+"</b>"
+      :"Goods handed over now — this IS the tax invoice, series <b>"+esc(fieldNo())+"</b>")+'</span>'+
+  '</div>'+
 
   '<div class="row" style="align-items:stretch">'+
     /* left: mic + transcript */
@@ -2903,6 +2916,7 @@ VIEWS.voice=function(p){
   $("#v-auto").onchange=e=>{db.settings.voiceAutoAdd=e.target.checked;mark()};
   $("#v-mode").onchange=e=>{vst.mode=e.target.value};
   $("#v-help").onclick=vHelp;
+  p.querySelectorAll("[data-kind]").forEach(b=>b.onclick=()=>{db.settings.fieldKind=b.dataset.kind;mark();render()});
   const ti=$("#v-text");
   ti.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();const v=ti.value.trim();if(v){vst.transcript=v;handle(v)}}};
   $("#v-add").onclick=()=>{const v=ti.value.trim();if(v){vst.transcript=v;handle(v)}};
@@ -2972,6 +2986,7 @@ VIEWS.voice=function(p){
       '<button class="btn" id="v-clear">Clear bill</button>'+
       '<div class="grow"></div>'+
       '<button class="btn" id="v-review" style="padding:11px 18px;font-size:15px">Review &amp; save</button>'+
+      '<button class="btn" id="v-savewa" style="padding:11px 18px;font-size:15px">Save &amp; WhatsApp</button>'+
       '<button class="btn pri" id="v-saveprint" style="padding:11px 18px;font-size:15px">Save &amp; print</button>'+
     '</div>';
     n.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{vst.lines[b.dataset.inc].qty=num(vst.lines[b.dataset.inc].qty)+1;drawLines()});
@@ -2980,8 +2995,9 @@ VIEWS.voice=function(p){
     n.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{vst.lines.splice(Number(b.dataset.del),1);drawLines()});
     $("#v-undo").onclick=()=>{vst.lines.pop();Voice.say("Last item removed");drawLines()};
     $("#v-clear").onclick=()=>confirmBox("Clear this bill and start again?",()=>{vReset();render()});
-    $("#v-review").onclick=()=>review(false);
-    $("#v-saveprint").onclick=()=>review(true);
+    $("#v-review").onclick=()=>review({});
+    $("#v-savewa").onclick=()=>review({share:true});
+    $("#v-saveprint").onclick=()=>review({print:true});
   }
   function addItem(it,q,unit){
     const bs=batchStock(it.id).filter(b=>b.qty>0);
@@ -3010,8 +3026,8 @@ VIEWS.voice=function(p){
       if(r.cmd==="total"){const T=vTotals();Voice.say("Total "+Math.round(T.grand)+" rupees");toast("Total "+rup(T.grand));return}
       if(r.cmd==="cash"){vst.mode="Cash";Voice.say("Cash bill");render();return}
       if(r.cmd==="credit"){vst.mode="Credit";Voice.say("Credit bill");render();return}
-      if(r.cmd==="save"){review(false);return}
-      if(r.cmd==="print"){review(true);return}
+      if(r.cmd==="save"){review({});return}
+      if(r.cmd==="print"){review({print:true});return}
       if(r.cmd==="repeat"){const l=vst.lines[vst.lines.length-1];
         if(l)Voice.say(l.name+", "+qty(l.qty)+", "+money(vLineTotal(l)));return}
     }
@@ -3055,16 +3071,20 @@ VIEWS.voice=function(p){
       if(s>bs){bs=s;best=x}});
     return bs>=1.4?best:null;
   }
-  function review(print){
+  function review(opt){
+    opt=opt||{};
     if(!vst.lines.length)return toast("Nothing on the bill yet");
+    const kind=db.settings.fieldKind||"order";
     const T=vTotals();
     const rx=vst.lines.filter(l=>(item(l.item)||{}).rx);
     const short=vst.lines.filter(l=>{
       const have=(batchStock(l.item).find(b=>(b.batch||"")===(l.batch||""))||{qty:0}).qty;
       return num(l.qty)>have});
-    modal("Check the bill before saving",
+    modal("Check the "+(kind==="order"?"order":"bill")+" before saving",
       '<div style="font-size:15px">'+
-      '<div class="row" style="gap:18px;margin-bottom:10px"><div><div class="l f">Customer</div><b>'+esc(vst.partyName||"Counter sale")+'</b></div>'+
+      '<div class="row" style="gap:18px;margin-bottom:10px"><div><div class="l f">Document</div><b>'+FKIND[kind].title+'</b></div>'+
+      '<div><div class="l f">Number</div><b>'+esc(kind==="order"?ordNo():fieldNo())+'</b></div>'+
+      '<div><div class="l f">Customer</div><b>'+esc(vst.partyName||"Counter sale")+'</b></div>'+
       '<div><div class="l f">Type</div><b>'+esc(vst.mode)+'</b></div>'+
       '<div><div class="l f">Items</div><b>'+vst.lines.length+'</b></div></div>'+
       tbl(["Item","Batch","Qty","Rate","Amount"],vst.lines.map(l=>[esc(l.name),esc(l.batch||"—"),
@@ -3076,36 +3096,11 @@ VIEWS.voice=function(p){
       (rx.length?'<div class="warnbar" style="margin-top:10px">'+rx.length+' prescription item'+(rx.length>1?"s":"")+' — keep the doctor\'s prescription on file.</div>':'')+
       (short.length?'<div class="warnbar" style="margin-top:8px">Short of stock: '+esc(short.map(l=>l.name).join(", "))+'. The bill will still save and stock will go negative.</div>':'')+
       '</div>',
-      [["Back","close"],[print?"Save & print":"Save bill",()=>commit(print),"pri"]],true);
+      [["Back","close"],
+       [opt.print?"Save & print":opt.share?"Save & send":"Save "+(kind==="order"?"order":"bill"),
+        ()=>{const rec=commitField(vst,kind,!!opt.print,!!opt.share);
+             if(rec){vReset();render()}},"pri"]],true);
     Voice.say("Total "+Math.round(T.grand)+" rupees. Save?");
-  }
-  function commit(print){
-    const T=vTotals();
-    if(!vst.party&&vst.partyName.trim()){
-      const pt={id:uid("p"),name:vst.partyName.trim(),type:"customer",gstin:"",state:db.company.state,
-        addr:"",city:"",pin:"",phone:"",email:"",credit:0,limit:0,opening:0,openingType:"dr",rateType:"rate"};
-      db.parties.push(pt);vst.party=pt.id;
-    }
-    if(!vst.party){
-      let counter=db.parties.find(x=>x.name==="Counter Sale");
-      if(!counter){counter={id:uid("p"),name:"Counter Sale",type:"customer",gstin:"",state:db.company.state,
-        addr:"",city:"",pin:"",phone:"",email:"",credit:0,limit:0,opening:0,openingType:"dr",rateType:"rate"};
-        db.parties.push(counter)}
-      vst.party=counter.id;vst.partyName=counter.name;
-    }
-    const rec={id:uid("d"),type:"sale",no:docNo("sale"),date:today(),party:vst.party,partyName:vst.partyName,
-      mode:vst.mode,refNo:"",refDate:"",against:"",vehicle:"",eway:"",lr:"",
-      due:vst.mode==="Cash"?"":addDays(today(),num((party(vst.party)||{}).credit)),
-      lines:vst.lines.map(l=>({...l,qty:num(l.qty)})),charges:[],billDisc:"",notes:"Entered by voice"};
-    calcDoc(rec);
-    db.invoices.push(rec);
-    const m=/(\d+)\s*$/.exec(rec.no);db.settings.next=m?Number(m[1])+1:db.settings.next+1;
-    touch();
-    Voice.say("Bill "+rec.no+" saved. "+Math.round(rec.totals.grand)+" rupees");
-    toast("Bill "+rec.no+" saved · "+rup(rec.totals.grand));
-    const id=rec.id;
-    vReset();render();
-    if(print)printDoc(id);
   }
 };
 function vHelp(){
@@ -3128,6 +3123,372 @@ function vHelp(){
    '<p class="hint">Nothing saves until you tap <b>Save</b> on the review screen — a misheard word can never become a bill on its own. '+
    'The earliest-expiry batch in stock is picked automatically.</p>'+
    '</div>',[["Close","close"]],true);
+}
+/* =================================================================
+   field mode — order slips and field tax invoices taken at the shop,
+   shared on WhatsApp, printed on a mini Bluetooth printer, and handed
+   to Marg at home.
+   ================================================================= */
+const ordNo=()=>db.settings.ordPrefix+String(db.settings.ordNext||1).padStart(4,"0");
+const fieldNo=()=>db.settings.fieldPrefix+String(db.settings.fieldNext||1).padStart(4,"0");
+const FKIND={order:{title:"ORDER / ESTIMATE",short:"Order",coll:"orders"},
+             invoice:{title:"TAX INVOICE",short:"Tax invoice",coll:"invoices"}};
+
+function commitField(st,kind,print,share){
+  if(!st.lines.length){toast("Nothing on the bill yet");return null}
+  if(!st.party&&st.partyName.trim()){
+    const pt={id:uid("p"),name:st.partyName.trim(),type:"customer",gstin:"",state:db.company.state,
+      addr:"",city:"",pin:"",phone:"",email:"",credit:0,limit:0,opening:0,openingType:"dr",rateType:"rate"};
+    db.parties.push(pt);st.party=pt.id;
+  }
+  if(!st.party){
+    let c=db.parties.find(x=>x.name==="Counter Sale");
+    if(!c){c={id:uid("p"),name:"Counter Sale",type:"customer",gstin:"",state:db.company.state,addr:"",city:"",
+      pin:"",phone:"",email:"",credit:0,limit:0,opening:0,openingType:"dr",rateType:"rate"};db.parties.push(c)}
+    st.party=c.id;st.partyName=c.name;
+  }
+  const isOrder=kind==="order";
+  const rec={id:uid("d"),type:isOrder?"order":"sale",kind,source:"field",
+    no:isOrder?ordNo():fieldNo(),date:today(),party:st.party,partyName:st.partyName,
+    mode:st.mode,refNo:"",refDate:"",against:"",vehicle:"",eway:"",lr:"",
+    due:st.mode==="Cash"?"":addDays(today(),num((party(st.party)||{}).credit)),
+    lines:st.lines.map(l=>({...l,qty:num(l.qty)})),charges:[],billDisc:"",
+    notes:isOrder?"Order taken in the field":"Field sale"};
+  calcDoc(rec);
+  if(isOrder){db.orders.push(rec);db.settings.ordNext=(db.settings.ordNext||1)+1}
+  else{db.invoices.push(rec);db.settings.fieldNext=(db.settings.fieldNext||1)+1}
+  touch();
+  toast(FKIND[kind].short+" "+rec.no+" saved · "+rup(rec.totals.grand));
+  if(print)printFieldSlip(rec);
+  if(share)shareDoc(rec,"image");
+  return rec;
+}
+function findAny(id){
+  const o=(db.orders||[]).find(x=>x.id===id);if(o)return{d:o,k:"orders"};
+  return findDoc(id);
+}
+/* ---------- printing a field slip ---------- */
+function printFieldSlip(doc){
+  const w=db.settings.printFormat==="thermal58"?58:80;
+  printSlipThermal(doc,w);
+}
+function printSlipThermal(d,width){
+  const c=db.company,t=d.totals||calcDoc(d),pt=party(d.party)||{};
+  const kind=d.kind||"invoice";
+  const w=width===58?"52mm":"72mm";
+  setPage(width===58?"thermal58":"thermal80");
+  const line='<div style="border-top:1px dashed #000;margin:3px 0"></div>';
+  $("#printwrap").innerHTML='<div class="inv" style="width:'+w+';padding:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:'+(width===58?"9.5px":"11px")+';line-height:1.35">'+
+    '<div style="text-align:center"><div style="font-weight:700;font-size:'+(width===58?"12px":"14px")+'">'+esc(c.name)+'</div>'+
+    (c.prop?'<div>Prop: '+esc(c.prop)+'</div>':'')+
+    '<div>'+esc([c.addr,c.city].filter(Boolean).join(", "))+'</div>'+
+    (c.phone?'<div>Ph '+esc(c.phone)+'</div>':'')+
+    (c.gstin?'<div>GSTIN '+esc(c.gstin)+'</div>':'')+
+    ([c.dl,c.dl2].filter(Boolean).length?'<div>DL '+esc([c.dl,c.dl2].filter(Boolean).join(", "))+'</div>':'')+
+    '<div style="font-weight:700;margin-top:3px">'+FKIND[kind].title+'</div></div>'+line+
+    '<div>No: '+esc(d.no)+'</div><div>Date: '+dmy(d.date)+' '+new Date().toTimeString().slice(0,5)+'</div>'+
+    '<div>Shop: '+esc(pt.name||"")+'</div>'+(pt.gstin?'<div>GSTIN: '+esc(pt.gstin)+'</div>':'')+line+
+    d.lines.map(l=>{const x=calcLine(l,t.inter);
+      return '<div>'+esc(l.name)+(l.batch?' ['+esc(l.batch)+']':'')+'</div>'+
+        '<div style="display:flex;justify-content:space-between"><span>'+qty(l.qty)+(num(l.free)?"+"+qty(l.free):"")+' '+esc(l.unit)+' x '+money(l.rate)+
+        (num(l.disc)?' -'+num(l.disc)+'%':'')+'</span><span>'+money(x.total)+'</span></div>'}).join("")+
+    line+
+    '<div style="display:flex;justify-content:space-between"><span>Taxable</span><span>'+money(t.taxable)+'</span></div>'+
+    (t.inter?'<div style="display:flex;justify-content:space-between"><span>IGST</span><span>'+money(t.igst)+'</span></div>'
+      :'<div style="display:flex;justify-content:space-between"><span>CGST</span><span>'+money(t.cgst)+'</span></div>'+
+       '<div style="display:flex;justify-content:space-between"><span>SGST</span><span>'+money(t.sgst)+'</span></div>')+
+    (t.round?'<div style="display:flex;justify-content:space-between"><span>Round off</span><span>'+money(t.round)+'</span></div>':'')+
+    '<div style="display:flex;justify-content:space-between;font-weight:700;font-size:'+(width===58?"11px":"13px")+'"><span>TOTAL</span><span>'+money(t.grand)+'</span></div>'+
+    '<div style="font-size:'+(width===58?"8.5px":"10px")+'">'+esc(words(t.grand))+'</div>'+line+
+    '<div style="text-align:center">'+
+      (kind==="order"?'<b>NOT A TAX INVOICE</b><br>Tax invoice will follow with the goods.<br>':
+        (d.mode==="Cash"?"Paid by cash<br>":"Credit bill"+(d.due?" — due "+dmy(d.due):"")+"<br>"))+
+      (c.upi?'UPI: '+esc(c.upi)+'<br>':'')+'Thank you</div>'+
+  '</div>';
+  setTimeout(()=>{doPrint();setPage(db.settings.printFormat||"A4")},60);
+}
+/* ---------- the slip as a shareable picture ---------- */
+function billImage(d){
+  const c=db.company,t=d.totals||calcDoc(d),pt=party(d.party)||{};
+  const kind=d.kind||"invoice";
+  const W=760,P=28;
+  const cv=document.createElement("canvas");
+  const ctx=cv.getContext("2d");
+  const F=(sz,wt)=>(wt||"400")+" "+sz+'px -apple-system,"Segoe UI",Roboto,Arial,sans-serif';
+  const MONO=sz=>'400 '+sz+'px ui-monospace,Menlo,Consolas,monospace';
+  /* measure first, then draw at the right height */
+  const head=[];
+  head.push([c.name,22,"700"]);
+  if(c.prop)head.push(["Prop.: "+c.prop,14]);
+  const addr=[c.addr,c.city,c.pin].filter(Boolean).join(", ");
+  if(addr)head.push([addr,14]);
+  if(c.phone)head.push(["Ph: "+c.phone,14]);
+  if(c.gstin)head.push(["GSTIN: "+c.gstin,14,"600"]);
+  const dls=[c.dl,c.dl2].filter(Boolean);
+  if(dls.length)head.push(["D.L. No: "+dls.join(", "),13]);
+  const rows=d.lines.length;
+  const H=P+head.length*22+40+70+34+rows*40+30+150+(kind==="order"?46:26)+40;
+  cv.width=W;cv.height=H;
+  ctx.fillStyle="#fff";ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#111";ctx.textBaseline="top";
+  let y=P;
+  head.forEach(([txt,sz,wt])=>{ctx.font=F(sz,wt);ctx.textAlign="center";ctx.fillText(txt,W/2,y);y+=sz+6});
+  y+=6;
+  ctx.fillStyle="#111";ctx.fillRect(P,y,W-2*P,2);y+=12;
+  ctx.font=F(17,"700");ctx.textAlign="center";
+  ctx.fillText(FKIND[kind].title,W/2,y);y+=28;
+  ctx.font=F(14);ctx.textAlign="left";
+  ctx.fillText("No: "+d.no,P,y);
+  ctx.textAlign="right";ctx.fillText("Date: "+dmy(d.date),W-P,y);y+=22;
+  ctx.textAlign="left";ctx.font=F(15,"700");
+  ctx.fillText("To: "+(pt.name||""),P,y);y+=20;
+  ctx.font=F(13);ctx.fillStyle="#555";
+  ctx.fillText([pt.city,pt.gstin?"GSTIN "+pt.gstin:"",pt.phone].filter(Boolean).join("  ·  "),P,y);y+=24;
+  ctx.fillStyle="#111";
+  /* table header */
+  ctx.fillStyle="#eef1f5";ctx.fillRect(P,y,W-2*P,26);ctx.fillStyle="#333";
+  ctx.font=F(12,"700");
+  ctx.fillText("ITEM",P+8,y+7);
+  ctx.textAlign="right";
+  ctx.fillText("QTY",P+430,y+7);ctx.fillText("RATE",P+540,y+7);ctx.fillText("AMOUNT",W-P-8,y+7);
+  y+=30;ctx.fillStyle="#111";
+  d.lines.forEach((l,i)=>{
+    const x=calcLine(l,t.inter);
+    ctx.textAlign="left";ctx.font=F(14,"600");
+    let nm=l.name;
+    while(ctx.measureText(nm).width>330&&nm.length>6)nm=nm.slice(0,-2);
+    if(nm!==l.name)nm+="…";
+    ctx.fillText(nm,P+8,y);
+    ctx.font=F(11);ctx.fillStyle="#666";
+    ctx.fillText([l.batch?"B: "+l.batch:"",l.exp?"Exp "+my(l.exp):"",num(l.mrp)?"MRP "+money(l.mrp):"",
+      num(l.disc)?"less "+num(l.disc)+"%":"",num(l.free)?qty(l.free)+" free":""].filter(Boolean).join("  ·  "),P+8,y+17);
+    ctx.fillStyle="#111";ctx.textAlign="right";ctx.font=MONO(14);
+    ctx.fillText(qty(l.qty)+(num(l.free)?"+"+qty(l.free):"")+" "+l.unit,P+430,y+2);
+    ctx.fillText(money(l.rate),P+540,y+2);
+    ctx.font=MONO(14);ctx.fillText(money(x.total),W-P-8,y+2);
+    y+=40;
+    ctx.strokeStyle="#eceff3";ctx.beginPath();ctx.moveTo(P,y-7);ctx.lineTo(W-P,y-7);ctx.stroke();
+  });
+  y+=6;
+  const put=(k,v,bold,sz)=>{ctx.textAlign="right";ctx.font=F(sz||14,bold?"700":"400");
+    ctx.fillText(k,W-P-150,y);ctx.font=MONO(sz||14);if(bold)ctx.font="700 "+(sz||14)+"px ui-monospace,Menlo,Consolas,monospace";
+    ctx.fillText(v,W-P-8,y);y+=(sz||14)+9};
+  put("Taxable",money(t.taxable));
+  if(t.inter)put("IGST",money(t.igst));
+  else{put("CGST",money(t.cgst));put("SGST",money(t.sgst))}
+  if(t.round)put("Round off",money(t.round));
+  y+=4;ctx.fillStyle="#111";ctx.fillRect(W-P-260,y,260,2);y+=10;
+  put("TOTAL","Rs "+money(t.grand),true,20);
+  y+=4;ctx.textAlign="left";ctx.font=F(12);ctx.fillStyle="#555";
+  ctx.fillText(words(t.grand),P,y);y+=24;
+  if(kind==="order"){
+    ctx.fillStyle="#b4541a";ctx.font=F(13,"700");
+    ctx.fillText("NOT A TAX INVOICE — tax invoice will follow with the goods.",P,y);y+=22;
+  }
+  ctx.fillStyle="#777";ctx.font=F(11);
+  ctx.fillText((c.upi?"UPI: "+c.upi+"   ·   ":"")+"Thank you",P,y);
+  return cv;
+}
+function billText(d){
+  const t=d.totals||calcDoc(d),pt=party(d.party)||{},c=db.company,kind=d.kind||"invoice";
+  const L=[];
+  L.push("*"+c.name+"*");
+  if(c.gstin)L.push("GSTIN: "+c.gstin);
+  L.push("");L.push("*"+FKIND[kind].title+"*  "+d.no);
+  L.push("Date: "+dmy(d.date));
+  L.push("To: "+(pt.name||""));
+  L.push("");
+  d.lines.forEach(l=>{const x=calcLine(l,t.inter);
+    L.push(l.name+(l.batch?" ["+l.batch+"]":""));
+    L.push("   "+qty(l.qty)+(num(l.free)?"+"+qty(l.free)+"F":"")+" "+l.unit+" x "+money(l.rate)+
+      (num(l.disc)?" less "+num(l.disc)+"%":"")+"  =  "+money(x.total))});
+  L.push("");
+  L.push("Taxable: "+money(t.taxable));
+  if(t.inter)L.push("IGST: "+money(t.igst));
+  else{L.push("CGST: "+money(t.cgst));L.push("SGST: "+money(t.sgst))}
+  if(t.round)L.push("Round off: "+money(t.round));
+  L.push("*TOTAL: Rs "+money(t.grand)+"*");
+  L.push(words(t.grand));
+  L.push("");
+  if(kind==="order")L.push("_Not a tax invoice — tax invoice will follow with the goods._");
+  else if(d.mode!=="Cash"&&d.due)L.push("Payment due: "+dmy(d.due));
+  if(c.upi)L.push("UPI: "+c.upi);
+  if(c.phone)L.push(c.name+" · "+c.phone);
+  return L.join("\n");
+}
+async function shareDoc(d,how){
+  const text=billText(d);
+  const pt=party(d.party)||{};
+  if(how==="text"){
+    const phone=String(pt.phone||"").replace(/\D/g,"").replace(/^(\d{10})$/,"91$1");
+    const url="https://wa.me/"+phone+"?text="+encodeURIComponent(text);
+    try{window.open(url,"_blank")}catch(e){}
+    return;
+  }
+  const cv=billImage(d);
+  const name=(d.no||"bill").replace(/\W+/g,"-")+".png";
+  /* 1. the APK: write to cache, then the Android share sheet */
+  try{
+    const P=window.Capacitor&&window.Capacitor.Plugins;
+    if(P&&P.Filesystem&&P.Share){
+      const b64=cv.toDataURL("image/png").split(",")[1];
+      const w=await P.Filesystem.writeFile({path:name,data:b64,directory:"CACHE"});
+      const uri=(await P.Filesystem.getUri({path:name,directory:"CACHE"})).uri||w.uri;
+      await P.Share.share({title:d.no,text,url:uri,dialogTitle:"Send the bill"});
+      return;
+    }
+  }catch(e){ toast("Share failed — saving the picture instead") }
+  /* 2. a browser that can share files */
+  try{
+    const blob=await new Promise(r=>cv.toBlob(r,"image/png"));
+    const file=new File([blob],name,{type:"image/png"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],text,title:d.no});return;
+    }
+    /* 3. download the picture and open WhatsApp with the text */
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    toast("Picture saved — attach it in WhatsApp");
+    const phone=String(pt.phone||"").replace(/\D/g,"").replace(/^(\d{10})$/,"91$1");
+    window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(text),"_blank");
+  }catch(e){toast("Could not build the picture here")}
+}
+function previewBill(id){
+  const f=findAny(id);if(!f)return;const d=f.d;calcDoc(d);
+  const cv=billImage(d);
+  modal((d.kind==="order"?"Order ":"Bill ")+d.no,
+    '<div style="text-align:center"><img src="'+cv.toDataURL("image/png")+'" style="max-width:100%;border:1px solid var(--line);border-radius:8px"></div>',
+    [["Send on WhatsApp",()=>{shareDoc(d,"image");return false},"pri"],
+     ["Text only",()=>{shareDoc(d,"text");return false}],
+     ["Print",()=>{printSlipThermal(d,db.settings.printFormat==="thermal58"?58:80);return false}],
+     ["Close","close"]],true);
+}
+/* =================================================================
+   orders register + the hand-off to Marg on the PC
+   ================================================================= */
+let ordF={q:"",from:"",to:"",status:""};
+VIEWS.orders=function(p){
+  (db.orders||[]).forEach(calcDoc);
+  const list=(db.orders||[]).filter(d=>{
+    const pt=party(d.party);
+    if(!inRange(d.date,ordF.from,ordF.to))return false;
+    if(ordF.status==="open"&&d.billed)return false;
+    if(ordF.status==="billed"&&!d.billed)return false;
+    if(ordF.q){const s=(d.no+" "+(pt?pt.name:"")+" "+d.lines.map(l=>l.name).join(" ")).toLowerCase();
+      if(!s.includes(ordF.q.toLowerCase()))return false}
+    return true}).sort((a,b)=>b.date.localeCompare(a.date)||String(b.no).localeCompare(String(a.no)));
+  const open=list.filter(d=>!d.billed);
+  const fieldInv=db.invoices.filter(d=>d.source==="field");
+  p.innerHTML=hdr("Field orders",
+      list.length+" orders · "+rup(list.reduce((s,d)=>s+d.totals.grand,0))+
+      " · "+open.length+" still to bill · "+fieldInv.length+" field tax invoices",
+      '<button class="btn" id="o-marg">Send to Marg</button><button class="btn pri" id="o-new">+ Take order</button>')+
+    '<div class="card" style="margin-bottom:12px"><div class="bd"><div class="row">'+
+      '<div class="fld" style="flex:1;min-width:170px"><label class="f">Search</label><input id="of-q" value="'+esc(ordF.q)+'"></div>'+
+      '<div class="fld" style="flex:0 0 145px"><label class="f">From</label><input id="of-from" type="date" value="'+ordF.from+'"></div>'+
+      '<div class="fld" style="flex:0 0 145px"><label class="f">To</label><input id="of-to" type="date" value="'+ordF.to+'"></div>'+
+      '<div class="fld" style="flex:0 0 160px"><label class="f">Show</label><select id="of-st">'+
+        [["","All"],["open","Not billed yet"],["billed","Billed"]].map(([v,l])=>'<option value="'+v+'"'+(ordF.status===v?" selected":"")+'>'+l+'</option>').join("")+
+      '</select></div>'+
+    '</div></div></div>'+
+    '<div class="card">'+(list.length?tbl(["Order","Date","Shop","Items","Qty","Total","Status","Actions"],
+      list.map(d=>{const pt=party(d.party);
+        return ['<b>'+esc(d.no)+'</b>',dmy(d.date),esc(pt?pt.name:"—"),d.lines.length,{n:qty(d.totals.qty)},
+          {n:money(d.totals.grand)},
+          d.billed?'<span class="tag paid">Billed '+esc(d.billedAs||"")+'</span>':'<span class="tag due">To bill</span>',
+          '<button class="btn sm" data-view="'+d.id+'">Slip</button> '+
+          '<button class="btn sm" data-wa="'+d.id+'">WhatsApp</button> '+
+          (d.billed?'':'<button class="btn sm" data-conv="'+d.id+'">Make bill</button> ')+
+          '<button class="btn sm" data-del="'+d.id+'">✕</button>']})):
+      '<div class="empty">No orders yet. Tap <b>Take order</b> on the phone at the shop.</div>')+'</div>';
+  $("#o-new").onclick=()=>{vReset();db.settings.fieldKind="order";go("voice")};
+  $("#o-marg").onclick=margExport;
+  $("#of-q").oninput=e=>{ordF.q=e.target.value;const c=e.target.selectionStart;render();const n=$("#of-q");n.focus();n.setSelectionRange(c,c)};
+  $("#of-from").onchange=e=>{ordF.from=e.target.value;render()};
+  $("#of-to").onchange=e=>{ordF.to=e.target.value;render()};
+  $("#of-st").onchange=e=>{ordF.status=e.target.value;render()};
+  p.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>previewBill(b.dataset.view));
+  p.querySelectorAll("[data-wa]").forEach(b=>b.onclick=()=>{const d=db.orders.find(x=>x.id===b.dataset.wa);shareDoc(d,"image")});
+  p.querySelectorAll("[data-conv]").forEach(b=>b.onclick=()=>convertOrder(b.dataset.conv));
+  p.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>confirmBox("Delete this order?",()=>{
+    db.orders=db.orders.filter(x=>x.id!==b.dataset.del);touch();render()}));
+};
+function convertOrder(id){
+  const o=db.orders.find(x=>x.id===id);if(!o)return;
+  calcDoc(o);
+  modal("Turn order "+o.no+" into a tax invoice",
+    '<p style="margin-top:0">This raises a proper sales invoice in <b>this</b> app — stock moves and the GST goes into your returns here.</p>'+
+    '<div class="hint">If Marg on the PC is your book of record, do not also import this order into Marg, or the sale is counted twice.</div>'+
+    '<div class="sep"></div>'+
+    tbl(["Item","Batch","Qty","Rate","Amount"],o.lines.map(l=>[esc(l.name),esc(l.batch||"—"),
+      {n:qty(l.qty)},{n:money(l.rate)},{n:money(calcLine(l,o.totals.inter).total)}]))+
+    '<div class="totbox big"><span>Total</span><span class="mono">'+rup(o.totals.grand)+'</span></div>',
+    [["Cancel","close"],["Raise invoice",()=>{
+      const rec=JSON.parse(JSON.stringify(o));
+      rec.id=uid("d");rec.type="sale";rec.kind="invoice";rec.source="order";rec.fromOrder=o.no;
+      rec.no=docNo("sale");rec.date=today();rec.notes="From field order "+o.no;
+      delete rec.billed;delete rec.billedAs;
+      calcDoc(rec);db.invoices.push(rec);
+      const m=/(\d+)\s*$/.exec(rec.no);db.settings.next=m?Number(m[1])+1:db.settings.next+1;
+      o.billed=true;o.billedAs=rec.no;
+      touch();render();toast("Invoice "+rec.no+" raised from order "+o.no);},"pri"]],true);
+}
+/* ---------- Marg hand-off ---------- */
+const MARG_COLS=["Bill No","Bill Date","Party Name","Party GSTIN","Party State","Party State Code",
+  "Item Name","Item Code","Pack","Batch","Expiry","MRP","Qty","Free","Rate","Disc%","GST%",
+  "Taxable","CGST","SGST","IGST","Amount"];
+function margRows(docs){
+  const out=[MARG_COLS];
+  docs.forEach(d=>{calcDoc(d);const pt=party(d.party)||{};
+    d.lines.forEach(l=>{const x=calcLine(l,d.totals.inter);const it=item(l.item)||{};
+      out.push([d.no,dmy(d.date),pt.name||"",pt.gstin||"",stName(pt.state),pt.state||"",
+        l.name,it.code||"",it.pack||"",l.batch||"",l.exp?my(l.exp):"",num(l.mrp),num(l.qty),num(l.free),
+        num(l.rate),num(l.disc),num(l.gst),x.taxable,x.cgst,x.sgst,x.igst,x.total])})});
+  return out;
+}
+function margExport(){
+  const t=today();
+  const f=ordF.from||t,to=ordF.to||t;
+  modal("Send the day's work to Marg",
+   '<div class="row"><div class="fld" style="flex:1"><label class="f">From</label><input id="mg-from" type="date" value="'+f+'"></div>'+
+   '<div class="fld" style="flex:1"><label class="f">To</label><input id="mg-to" type="date" value="'+to+'"></div></div>'+
+   '<div id="mg-count" class="hint" style="margin-bottom:10px"></div>'+
+   '<div class="row" style="gap:8px">'+
+     '<button class="btn pri" id="mg-ord" style="flex:1">Orders CSV</button>'+
+     '<button class="btn" id="mg-inv" style="flex:1">Field invoices CSV</button>'+
+     '<button class="btn" id="mg-all" style="flex:1">Everything CSV</button>'+
+   '</div>'+
+   '<div class="sep"></div>'+
+   '<b>Setting it up in Marg — once, then it is one click every day</b>'+
+   '<ol style="font-size:13px;padding-left:18px;line-height:1.6">'+
+     '<li>Copy the CSV to the PC (WhatsApp it to yourself, or a pen drive).</li>'+
+     '<li>In Marg: <b>Masters → Marg Setups → Advance Features → ERP Bridger-Import-Inventory → Method</b>.</li>'+
+     '<li>Name the method (say “Samperk Phone”). Set <b>Not found want to create = Yes</b>, '+
+       '<b>Default Type = Sale Order</b> (or <b>Sale</b> if you want bills straight away), and '+
+       '<b>Data from line = 2</b>, because row 1 holds the column names.</li>'+
+     '<li>Map the columns to Marg’s fields. The file always has the same columns in the same order:<br>'+
+       '<span class="hint">'+MARG_COLS.map((c,i)=>(i+1)+". "+c).join(" · ")+'</span></li>'+
+     '<li>From then on: <b>Transactions → ERP Bridger → Import-Inventory</b>, pick the method, pick the file.</li>'+
+   '</ol>'+
+   '<div class="warnbar">Import an order into Marg <b>or</b> bill it here — not both, or the sale counts twice.</div>',
+   [["Close","close"]],true);
+  const upd=()=>{
+    const a=$("#mg-from").value,b=$("#mg-to").value;
+    const o=(db.orders||[]).filter(d=>inRange(d.date,a,b));
+    const i=db.invoices.filter(d=>d.source==="field"&&inRange(d.date,a,b));
+    $("#mg-count").innerHTML="<b>"+o.length+"</b> orders ("+rup(o.reduce((s,d)=>s+(d.totals||calcDoc(d)).grand,0))+
+      ") and <b>"+i.length+"</b> field tax invoices ("+rup(i.reduce((s,d)=>s+(d.totals||calcDoc(d)).grand,0))+") in this range.";
+    return{o,i,a,b};
+  };
+  upd();
+  $("#mg-from").onchange=upd;$("#mg-to").onchange=upd;
+  $("#mg-ord").onclick=()=>{const{o,a}=upd();if(!o.length)return toast("No orders in that range");
+    exportCsv("marg-sale-orders-"+a+".csv",margRows(o));return false};
+  $("#mg-inv").onclick=()=>{const{i,a}=upd();if(!i.length)return toast("No field invoices in that range");
+    exportCsv("marg-sale-bills-"+a+".csv",margRows(i));return false};
+  $("#mg-all").onclick=()=>{const{o,i,a}=upd();const all=o.concat(i);
+    if(!all.length)return toast("Nothing in that range");
+    exportCsv("marg-all-"+a+".csv",margRows(all));return false};
 }
 /* =================================================================
    catalogue loader, sample data, boot
