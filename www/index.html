@@ -248,8 +248,8 @@ const SYS=[
 function blank(){
   const d={
     meta:{app:"billing-desk",version:2,saved:null},
-    company:{name:"My Business",gstin:"",state:"27",addr:"",city:"",pin:"",phone:"",email:"",
-      dl:"",fssai:"",pan:"",bankName:"",bankAc:"",bankIfsc:"",upi:"",
+    company:{name:"My Business",prop:"",gstin:"",state:"27",addr:"",city:"",pin:"",phone:"",email:"",
+      dl:"",dl2:"",fssai:"",pan:"",bankName:"",bankAc:"",bankIfsc:"",upi:"",
       terms:"Goods once sold will not be taken back. Interest @18% p.a. on overdue bills.",
       decl:"We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct."},
     settings:{prefix:"INV-",next:1,purPrefix:"PUR-",purNext:1,crPrefix:"CN-",crNext:1,drPrefix:"DN-",drNext:1,vchNext:1,
@@ -1032,11 +1032,12 @@ function printDoc(id,fmt){
   const st=docStatus(d);
   $("#printwrap").innerHTML='<div class="inv">'+
     '<div class="ih"><div><div style="font-size:19px;font-weight:700">'+esc(c.name)+'</div>'+
+      (c.prop?'<div>Prop.: '+esc(c.prop)+'</div>':'')+
       '<div>'+esc([c.addr,c.city,c.pin].filter(Boolean).join(", "))+'</div>'+
       '<div>'+[c.phone?"Ph: "+c.phone:"",c.email].filter(Boolean).map(esc).join(" · ")+'</div>'+
       (c.gstin?'<div><b>GSTIN: '+esc(c.gstin)+'</b>'+(c.pan?' · PAN: '+esc(c.pan):'')+'</div>':'')+
-      ([c.dl?"D.L. No: "+c.dl:"",c.fssai?"FSSAI: "+c.fssai:""].filter(Boolean).length?
-        '<div>'+[c.dl?"D.L. No: "+c.dl:"",c.fssai?"FSSAI: "+c.fssai:""].filter(Boolean).map(esc).join(" · ")+'</div>':'')+
+      ([c.dl,c.dl2].filter(Boolean).length?'<div>D.L. No: '+esc([c.dl,c.dl2].filter(Boolean).join(", "))+'</div>':'')+
+      (c.fssai?'<div>FSSAI: '+esc(c.fssai)+'</div>':'')+
       '<div>State: '+esc(stName(c.state))+' ('+esc(c.state)+')</div></div>'+
       '<div style="text-align:right"><div style="font-size:13px;font-weight:700">'+TITLES[f.k]+'</div>'+
       '<div>No: <b>'+esc(d.no)+'</b></div><div>Date: '+dmy(d.date)+'</div>'+
@@ -1083,6 +1084,24 @@ function printHtml(html){$("#printwrap").innerHTML='<div class="inv" style="widt
 /* =================================================================
    dashboard + document registers + outstanding
    ================================================================= */
+/* A pharma wholesaler's invoice legally carries the drug licence numbers;
+   a GST invoice carries the full address. Say what is still missing rather
+   than printing bills that are quietly non-compliant. */
+function setupGaps(){
+  const c=db.company,miss=[];
+  if(!c.gstin)miss.push("GSTIN");
+  if(!c.addr)miss.push("shop address");
+  if(!c.pin)miss.push("PIN code");
+  if(!c.phone)miss.push("phone");
+  if(!c.dl&&!c.dl2)miss.push("drug licence numbers (20B / 21B)");
+  if(!c.bankName&&!c.upi)miss.push("bank or UPI details");
+  if(!miss.length)return "";
+  return '<div class="warnbar" style="display:flex;align-items:center;gap:12px">'+
+    '<div class="grow">Bills are printing without: <b>'+esc(miss.join(", "))+'</b>. '+
+    (miss.some(m=>m.indexOf("licence")>=0)?"Drug licence numbers are required on a chemist's invoice. ":'')+
+    'Add them once and every bill carries them.</div>'+
+    '<button class="btn" id="dash-setup">Open Setup</button></div>';
+}
 VIEWS.dash=function(p){
   const t=today(),mStart=t.slice(0,8)+"01",fy=fyOf(t);
   const mInv=db.invoices.filter(i=>i.date>=mStart&&i.date<=t), tInv=db.invoices.filter(i=>i.date===t);
@@ -1100,6 +1119,7 @@ VIEWS.dash=function(p){
     const h=Math.max(1,b.v/mx*48);return '<rect x="'+(i*20+2)+'" y="'+(52-h)+'" width="15" height="'+h+'" rx="2" fill="'+(b.d===t?"#1f5f8b":"#b9ccdb")+'"><title>'+dmy(b.d)+": "+money(b.v)+'</title></rect>'}).join("")+'</svg>';
   p.innerHTML=hdr("Dashboard",dmy(t)+" · FY "+fy.label+" · "+db.items.length+" items, "+db.parties.length+" parties",
       '<button class="btn" id="d-pur">+ Purchase</button><button class="btn pri" id="d-new">+ Sales invoice</button>')+
+    setupGaps()+
     (ex.expired.length?'<div class="warnbar"><b>'+ex.expired.length+' expired batch'+(ex.expired.length>1?"es":"")+'</b> still showing stock — see Stock reports → Expiry.</div>':'')+
     '<div class="row" style="margin-bottom:14px">'+
       kpi("Today's sales",rup(tInv.reduce((s,i)=>s+i.totals.grand,0)),tInv.length+" bills")+
@@ -1127,6 +1147,7 @@ VIEWS.dash=function(p){
         (low.length?'<label class="f">Low stock</label>'+low.slice(0,6).map(i=>'<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0"><span>'+esc(i.name)+'</span><b class="mono">'+qty(stockOf(i.id))+' '+esc(i.unit)+'</b></div>').join(""):'<div class="hint">Stock levels look fine.</div>')+
       '</div></div>'+
     '</div>';
+  const su=$("#dash-setup");if(su)su.onclick=()=>go("settings");
   $("#d-new").onclick=()=>{doc=null;go("sale")};
   $("#d-pur").onclick=()=>{doc=null;go("purchase")};
   p.querySelectorAll("[data-inv]").forEach(a=>a.onclick=e=>{e.preventDefault();go("sale",{id:a.dataset.inv})});
@@ -2191,7 +2212,8 @@ function printThermal(id,width){
     '<div>'+esc([c.addr,c.city].filter(Boolean).join(", "))+'</div>'+
     (c.phone?'<div>Ph '+esc(c.phone)+'</div>':'')+
     (c.gstin?'<div>GSTIN '+esc(c.gstin)+'</div>':'')+
-    (c.dl?'<div>DL '+esc(c.dl)+'</div>':'')+'</div>'+line+
+    ([c.dl,c.dl2].filter(Boolean).length?'<div>DL '+esc([c.dl,c.dl2].filter(Boolean).join(", "))+'</div>':'')+
+    (c.prop?'<div>Prop: '+esc(c.prop)+'</div>':'')+'</div>'+line+
     '<div>Bill: '+esc(d.no)+'</div><div>Date: '+dmy(d.date)+' '+new Date().toTimeString().slice(0,5)+'</div>'+
     '<div>Party: '+esc(pt.name||"Cash")+'</div>'+(pt.gstin?'<div>GSTIN: '+esc(pt.gstin)+'</div>':'')+line+
     d.lines.map(l=>{const x=calcLine(l,t.inter);
@@ -2231,10 +2253,12 @@ function ewayJson(id){
   exportJson("eway-"+d.no.replace(/\W+/g,"")+".json",o);
 }
 /* ---------- setup & data ---------- */
-const CO_F=[{k:"name",l:"Business name",w:"2 1 260px"},{k:"gstin",l:"GSTIN",w:"1 1 180px"},
+const CO_F=[{k:"name",l:"Business name",w:"2 1 260px"},
+ {k:"prop",l:"Proprietor / partner",w:"1 1 200px"},{k:"gstin",l:"GSTIN",w:"1 1 180px"},
  {k:"pan",l:"PAN",w:"1 1 140px"},
  {k:"state",l:"State (place of supply)",t:"select",o:STATES.map(s=>[s[0],s[1]+" ("+s[0]+")"]),w:"1 1 200px"},
- {k:"dl",l:"Drug licence no.",w:"1 1 200px"},{k:"fssai",l:"FSSAI no.",w:"1 1 170px"},
+ {k:"dl",l:"Drug licence 20B (wholesale)",w:"1 1 200px"},{k:"dl2",l:"Drug licence 21B (wholesale)",w:"1 1 200px"},
+ {k:"fssai",l:"FSSAI no.",w:"1 1 170px"},
  {k:"addr",l:"Address",w:"2 1 260px"},{k:"city",l:"City",w:"1 1 140px"},{k:"pin",l:"PIN",w:"0 0 110px"},
  {k:"phone",l:"Phone",w:"1 1 150px"},{k:"email",l:"Email",w:"1 1 190px"},
  {k:"bankName",l:"Bank name",w:"1 1 170px"},{k:"bankAc",l:"Account no.",w:"1 1 170px"},
@@ -3189,6 +3213,24 @@ function sampleTransactions(){
   db.ledgers.find(l=>l.id==="bank").opening=175000;
   touch();
 }
+/* Samperk's own registration details. Only the facts given — address,
+   phone, drug licence and FSSAI are left blank for Paritosh to fill in,
+   because an invoice carrying a made-up licence number is worse than one
+   carrying none. */
+function applySamperk(c){
+  c.name="Samperk Pharmaceuticals Distributors";
+  c.prop="Paritosh Kumar";
+  c.gstin="05AJOPK1635L1Z0";
+  c.pan="AJOPK1635L";          /* the PAN embedded in the GSTIN */
+  c.state="05";                /* Uttarakhand */
+  c.city=c.city||"Dehradun";
+  c.terms="Goods once sold will not be taken back without prior approval. "+
+    "Interest @18% p.a. on bills not paid within the credit period. "+
+    "Subject to Dehradun jurisdiction.";
+  c.decl="We declare that this invoice shows the actual price of the goods described "+
+    "and that all particulars are true and correct.";
+  return c;
+}
 /* ---------- boot ---------- */
 function boot(){_stamp++;recalcAll();setPage(db.settings.printFormat||"A4");drawNav();render();
   Voice.lang=db.settings.voiceLang||"en-IN";
@@ -3212,17 +3254,19 @@ if("serviceWorker" in navigator&&location.protocol.startsWith("http")){
 (function start(){
   const b=loadBackup();
   if(b&&hydrate(b)&&(db.items.length||db.invoices.length)){
+    /* one-time: an install that predates the registration details */
+    if(!db.company.gstin&&/samperk/i.test(db.company.name||"")){applySamperk(db.company);mark()}
     boot();dirty=true;$("#dirty").textContent="restored from this device";return;
   }
   db=blank();
-  db.company.name="Samperk Pharmaceuticals Distributors";
-  db.company.terms="Goods once sold will not be taken back without prior approval. Interest @18% p.a. on bills not paid within credit period. Subject to local jurisdiction.";
+  applySamperk(db.company);
   loadCatalogue();dirty=false;boot();
   setTimeout(()=>modal("Welcome — Samperk Pharmaceuticals Distributors",
     '<p style="margin-top:0">Your <b>'+SEED.length+'-product catalogue</b> is already loaded with pack sizes, HSN codes, GST rates, MRP and Rx flags. '+
     'Sale rate (PTR) and purchase cost (PTS) are calculated from MRP on the usual 20% / 10% trade margins — edit any of them in <b>Items &amp; stock</b>.</p>'+
     '<ul style="margin:10px 0 0;padding-left:18px;font-size:13.5px">'+
-    '<li>Enter your <b>GSTIN, address, drug licence and bank details</b> in Setup — they print on every bill.</li>'+
+    '<li>GSTIN <b>05AJOPK1635L1Z0</b> (Uttarakhand) and proprietor <b>Paritosh Kumar</b> are already set. '+
+    'Add the <b>shop address, phone, drug licence 20B/21B and bank details</b> in Setup — they print on every bill.</li>'+
     '<li>Stock starts at zero. Enter a <b>Purchase bill</b> (with batch and expiry) and stock builds itself.</li>'+
     '<li>CGST+SGST or IGST is decided automatically from the customer\'s state.</li>'+
     '<li>Your data lives in <b>one file you keep</b> — press <b>Ctrl+S</b> or tap Save often.</li></ul>',
