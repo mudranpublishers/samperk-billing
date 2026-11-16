@@ -1,0 +1,90 @@
+name: Build Samperk Billing APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Pulled up to job level so the release step can test it in `if:`
+    env:
+      KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Install Capacitor
+        run: npm install
+
+      - name: Generate the Android project
+        run: npx cap add android
+
+      - name: Drop in the print bridge and the app name
+        run: |
+          # the template may ship MainActivity as .java or .kt — remove either
+          find android/app/src/main/java -name 'MainActivity.*' -delete || true
+          mkdir -p android/app/src/main/java/in/samperk/billing
+          cp android-src/app/src/main/java/in/samperk/billing/MainActivity.java \
+             android/app/src/main/java/in/samperk/billing/MainActivity.java
+          sed -i 's|<string name="app_name">.*</string>|<string name="app_name">Samperk Billing</string>|' \
+             android/app/src/main/res/values/strings.xml
+          sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">Samperk Billing</string>|' \
+             android/app/src/main/res/values/strings.xml
+          echo "--- MainActivity in place ---"
+          ls -l android/app/src/main/java/in/samperk/billing/
+
+      - name: Copy the web app in
+        run: npx cap sync android
+
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Build signed release APK
+        if: env.KEYSTORE_B64 != ''
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > android/app/samperk.keystore
+          cd android
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file=$PWD/app/samperk.keystore \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Rename the APKs
+        run: |
+          mkdir -p out
+          find android/app/build/outputs/apk -name '*.apk' -print -exec sh -c \
+            'cp "$1" "out/samperk-billing-$(basename $(dirname $1)).apk"' _ {} \;
+          ls -l out
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: samperk-billing-apk
+          path: out/*.apk
+          if-no-files-found: error

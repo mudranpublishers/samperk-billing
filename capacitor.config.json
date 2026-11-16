@@ -1,0 +1,12 @@
+{
+  "appId": "in.samperk.billing",
+  "appName": "Samperk Billing",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

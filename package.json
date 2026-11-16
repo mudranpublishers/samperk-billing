@@ -1,0 +1,20 @@
+{
+  "name": "samperk-billing",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Samperk Pharmaceuticals Distributors — GST billing, inventory and accounts (offline Android app)",
+  "scripts": {
+    "add:android": "cap add android",
+    "sync": "cap sync android",
+    "open": "cap open android",
+    "build:debug": "cd android && ./gradlew assembleDebug",
+    "build:release": "cd android && ./gradlew assembleRelease"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/android": "^8.6.2"
+  }
+}
