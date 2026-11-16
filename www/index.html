@@ -3584,7 +3584,11 @@ function applySamperk(c){
   c.gstin="05AJOPK1635L1Z0";
   c.pan="AJOPK1635L";          /* the PAN embedded in the GSTIN */
   c.state="05";                /* Uttarakhand */
+  c.addr=c.addr||"98/1, Nalapani Road";
   c.city=c.city||"Dehradun";
+  c.pin=c.pin||"248001";
+  c.phone=c.phone||"9837127099";
+  c.email=c.email||"dehradunmarg@gmail.com";
   c.terms="Goods once sold will not be taken back without prior approval. "+
     "Interest @18% p.a. on bills not paid within the credit period. "+
     "Subject to Dehradun jurisdiction.";
@@ -3616,7 +3620,7 @@ if("serviceWorker" in navigator&&location.protocol.startsWith("http")){
   const b=loadBackup();
   if(b&&hydrate(b)&&(db.items.length||db.invoices.length)){
     /* one-time: an install that predates the registration details */
-    if(!db.company.gstin&&/samperk/i.test(db.company.name||"")){applySamperk(db.company);mark()}
+    if(/samperk/i.test(db.company.name||"")&&(!db.company.gstin||!db.company.addr)){applySamperk(db.company);mark()}
     boot();dirty=true;$("#dirty").textContent="restored from this device";return;
   }
   db=blank();
