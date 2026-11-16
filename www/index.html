@@ -8607,10 +8607,20 @@ function loadCatalogue(){
        column is imported — a guessed MRP on a chemist's bill is worse than none. */
     const sale=n2(rate), cost=sale?n2(sale/1.1):0;
     let it=db.items.find(x=>x.name.toLowerCase()===String(name).toLowerCase());
-    const o={name,composition:"",company:company||"",form:"",type:"",pack:pack||"",unit:unit||"PCS",
-      hsn:hsn||"3004",gst:num(gst),cess:0,mrp:0,rate:sale,wrate:sale,cost,rx:false,
-      code:"SAM"+String(ix+1).padStart(5,"0"),rack:"",reorder:0};
-    if(it){Object.assign(it,o);upd++}else{o.id=uid("it");db.items.push(o);added++}
+    const o={name,company:company||"",pack:pack||"",unit:unit||"PCS",
+      hsn:hsn||"3004",gst:num(gst),cess:0,rate:sale,wrate:sale,cost,
+      code:"SAM"+String(ix+1).padStart(5,"0")};
+    if(it){
+      /* a rate, MRP or cost the shop has already entered always wins over
+         the blank that Marg's price list carried */
+      Object.keys(o).forEach(k=>{
+        if((k==="rate"||k==="wrate"||k==="cost")&&num(it[k])&&!num(o[k]))return;
+        it[k]=o[k]});
+      upd++;
+    } else {
+      o.id=uid("it");o.composition="";o.form="";o.type="";o.mrp=0;o.rx=false;o.rack="";o.reorder=0;
+      db.items.push(o);added++;
+    }
   });
   touch();return{added,upd};
 }
@@ -8706,6 +8716,24 @@ function applySamperk(c){
     "and that all particulars are true and correct.";
   return c;
 }
+/* The starter catalogue and demo shops that shipped before the real Marg
+   export arrived. Removed on upgrade, but only where nothing references them. */
+const CATALOGUE_VERSION=3;
+const DEMO_PARTIES=["Ganesh Medical Stores","Sai Pharma Distributors","Lifeline Chemist",
+  "Walk-in Customer","Apex Healthcare LLP","Sai Medical Stores","Jeevan Chemist",
+  "Apollo Pharmacy — Branch","Medilink Pharma Stockist","Vardhman Distributors"];
+function dropSampleData(){
+  const used=new Set();
+  ALLDOCS().concat(db.orders||[]).forEach(d=>used.add(d.party));
+  db.vouchers.forEach(v=>{if(v.party)used.add(v.party)});
+  db.parties=db.parties.filter(p=>used.has(p.id)||!DEMO_PARTIES.includes(p.name));
+  /* old starter items carried a 4-digit code; the real master uses 5 */
+  const real=new Set(SEED.map(r=>String(r[0]).toLowerCase()));
+  const touched=new Set();
+  ALLDOCS().concat(db.orders||[]).forEach(d=>d.lines.forEach(l=>touched.add(l.item)));
+  (db.adjust||[]).forEach(d=>d.lines.forEach(l=>touched.add(l.item)));
+  db.items=db.items.filter(i=>touched.has(i.id)||real.has(String(i.name).toLowerCase())||!/^SAM\d{4}$/.test(i.code||""));
+}
 /* ---------- boot ---------- */
 function boot(){_stamp++;recalcAll();setPage(db.settings.printFormat||"A4");drawNav();render();
   Voice.lang=db.settings.voiceLang||"en-IN";
@@ -8729,13 +8757,20 @@ if("serviceWorker" in navigator&&location.protocol.startsWith("http")){
 (function start(){
   const b=loadBackup();
   if(b&&hydrate(b)&&(db.items.length||db.invoices.length)){
-    /* one-time: an install that predates the registration details */
     if(/samperk/i.test(db.company.name||"")&&(!db.company.gstin||!db.company.addr)){applySamperk(db.company);mark()}
+    /* Installing a new version keeps the old saved data, so a newer catalogue
+       shipped inside the app would otherwise never reach the screen. */
+    if(num(db.settings.catalogueVersion)!==CATALOGUE_VERSION){
+      const r=loadCatalogue();
+      dropSampleData();
+      db.settings.catalogueVersion=CATALOGUE_VERSION;mark();
+      setTimeout(()=>toast("Catalogue updated — "+db.items.length+" products"),900);
+    }
     boot();dirty=true;$("#dirty").textContent="restored from this device";return;
   }
   db=blank();
   applySamperk(db.company);
-  loadCatalogue();dirty=false;boot();
+  loadCatalogue();db.settings.catalogueVersion=CATALOGUE_VERSION;dirty=false;boot();
   setTimeout(()=>modal("Welcome — Samperk Pharmaceuticals Distributors",
     '<p style="margin-top:0">Your real Marg item master is loaded — <b>'+SEED.length+' products</b> with pack, company and your own sale rates, '+
     'of which <b>'+SEED.filter(r=>r[3]>0).length+'</b> carry a rate.</p>'+
